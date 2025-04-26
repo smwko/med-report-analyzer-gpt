@@ -1,12 +1,12 @@
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { useReports, Report } from "@/context/ReportContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
-import { PlusCircle, FileText, Clock, AlertCircle, CheckCircle, Loader2, User, LogOut } from "lucide-react";
+import { PlusCircle, FileText, Clock, AlertCircle, CheckCircle, Loader2, User, LogOut, Upload } from "lucide-react";
 import Header from "@/components/Header";
 
 const Dashboard = () => {
@@ -15,6 +15,7 @@ const Dashboard = () => {
   const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Get reports for the current user
   const userReports = user ? getUserReports(user.id) : [];
@@ -25,6 +26,13 @@ const Dashboard = () => {
   
   // Latest report
   const latestReport = userReports.length > 0 ? userReports[0] : null;
+  
+  // Trigger file input click
+  const triggerFileUpload = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
   
   // Handle file upload
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -118,29 +126,32 @@ const Dashboard = () => {
               Upload a blood test report as JPG, PNG, HEIC, or PDF to get an AI-powered analysis
             </p>
             <div>
-              <label htmlFor="file-upload">
-                <Button 
-                  className="bg-medical-primary hover:bg-medical-dark" 
-                  disabled={uploading}
-                >
-                  {uploading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Analyzing...
-                    </>
-                  ) : (
-                    "Select File to Upload"
-                  )}
-                </Button>
-                <input 
-                  id="file-upload"
-                  type="file" 
-                  accept="image/jpeg,image/png,image/heic,application/pdf"
-                  onChange={handleFileUpload}
-                  disabled={uploading}
-                  className="hidden"
-                />
-              </label>
+              <Button 
+                className="bg-medical-primary hover:bg-medical-dark" 
+                disabled={uploading}
+                onClick={triggerFileUpload}
+              >
+                {uploading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Analyzing...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-4 w-4 mr-2" />
+                    Select File to Upload
+                  </>
+                )}
+              </Button>
+              <input 
+                ref={fileInputRef}
+                id="file-upload"
+                type="file" 
+                accept="image/jpeg,image/png,image/heic,application/pdf"
+                onChange={handleFileUpload}
+                disabled={uploading}
+                className="hidden"
+              />
             </div>
           </CardContent>
         </Card>
@@ -201,18 +212,24 @@ const Dashboard = () => {
               <p className="text-gray-500 text-center max-w-md mb-4">
                 Upload your first blood test report to get started with AI-powered analysis
               </p>
-              <label htmlFor="first-file-upload">
-                <Button className="bg-medical-primary hover:bg-medical-dark">Upload First Report</Button>
-                <input 
-                  id="first-file-upload"
-                  type="file" 
-                  accept="image/jpeg,image/png,image/heic,application/pdf"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-              </label>
-            </CardContent>
-          </Card>
+              <Button 
+                className="bg-medical-primary hover:bg-medical-dark"
+                onClick={triggerFileUpload}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Upload First Report
+              </Button>
+              <input 
+                ref={fileInputRef}
+                id="first-file-upload"
+                type="file" 
+                accept="image/jpeg,image/png,image/heic,application/pdf"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </div>
+          </CardContent>
+        </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {userReports.map((report) => (
