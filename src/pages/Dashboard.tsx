@@ -79,7 +79,9 @@ const Dashboard = () => {
     } finally {
       setUploading(false);
       // Reset input value so the same file can be uploaded again
-      e.target.value = "";
+      if (e.target) {
+        e.target.value = "";
+      }
     }
   };
   
@@ -227,9 +229,8 @@ const Dashboard = () => {
                 onChange={handleFileUpload}
                 className="hidden"
               />
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {userReports.map((report) => (
