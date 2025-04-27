@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -55,6 +54,7 @@ import {
   LabelList
 } from "recharts";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { jsPDF } from "jspdf";
 
 // Common blood test parameters with explanations
 const bloodParameterInfo = {
@@ -139,166 +139,129 @@ const referenceRanges = {
   ast: { min: 10, max: 40, unit: "U/L" }
 };
 
-// Helper function to extract parameter names from the report text
-const extractParameters = (reportText: string): string[] => {
-  const lowerCaseReport = reportText.toLowerCase();
-  return Object.keys(bloodParameterInfo).filter(param => 
-    lowerCaseReport.includes(param.toLowerCase())
-  );
-};
-
-// Improved helper function to extract numerical values from the report text
+// Updated parameter extraction function to get ALL parameters
 const extractParameterValues = (reportText: string): { parameter: string; value: number; status: string }[] => {
   const results: { parameter: string; value: number; status: string }[] = [];
   const parameterKeys = Object.keys(bloodParameterInfo);
-  
-  // Split the report into lines for easier processing
   const lines = reportText.split('\n');
   
-  // First try to find values in table format (most common in markdown)
-  // Look for the pattern | Parameter | Value | Status | or similar
   let inTable = false;
   let headerRow: string[] = [];
   
+  // First try table format
   for (const line of lines) {
-    const trimmedLine = line.trim();
+    if (!line.trim()) continue;
     
-    // Skip empty lines
-    if (!trimmedLine) continue;
-    
-    // Check if we've entered a table (line contains multiple | characters)
-    if (trimmedLine.startsWith('|') && trimmedLine.endsWith('|') && (trimmedLine.match(/\|/g) || []).length >= 3) {
+    if (line.includes('|') && (line.match(/\|/g) || []).length >= 3) {
       if (!inTable) {
-        // This might be the header row
         inTable = true;
-        headerRow = trimmedLine
-          .split('|')
+        headerRow = line.split('|')
           .map(cell => cell.trim().toLowerCase())
           .filter(cell => cell !== '');
-        
         continue;
       }
       
-      // Skip separator row with dashes
-      if (trimmedLine.includes('---')) continue;
+      if (line.includes('---')) continue;
       
-      // This is a data row
-      const cells = trimmedLine
-        .split('|')
+      const cells = line.split('|')
         .map(cell => cell.trim())
         .filter(cell => cell !== '');
       
       if (cells.length >= 2) {
-        // Find which column has the parameter name and value
-        const paramColIndex = headerRow.findIndex(h => 
-          h.includes('parameter') || h.includes('test') || h.includes('name')
-        );
-        const valueColIndex = headerRow.findIndex(h => 
-          h.includes('value') || h.includes('result')
-        );
-        const statusColIndex = headerRow.findIndex(h => 
-          h.includes('status') || h.includes('range') || h.includes('flag')
-        );
+        const paramCol = headerRow.findIndex(h => h.includes('parameter') || h.includes('test'));
+        const valueCol = headerRow.findIndex(h => h.includes('value') || h.includes('result'));
+        const statusCol = headerRow.findIndex(h => h.includes('status') || h.includes('range'));
         
-        if (paramColIndex !== -1 && valueColIndex !== -1 && paramColIndex < cells.length && valueColIndex < cells.length) {
-          const paramName = cells[paramColIndex].toLowerCase();
-          const valueText = cells[valueColIndex];
-          const valueMatch = valueText.match(/(\d+\.?\d*)/);
+        if (paramCol !== -1 && valueCol !== -1) {
+          const paramName = cells[paramCol].toLowerCase();
+          const valueText = cells[valueCol];
+          const numMatch = valueText.match(/(\d+\.?\d*)/);
           
-          if (valueMatch) {
-            const value = parseFloat(valueMatch[0]);
-            
-            // Determine status
+          if (numMatch) {
             let status = "normal";
-            if (statusColIndex !== -1 && statusColIndex < cells.length) {
-              const statusText = cells[statusColIndex].toLowerCase();
-              if (statusText.includes('high') || statusText.includes('elevated') || statusText.includes('above')) {
+            if (statusCol !== -1) {
+              const statusText = cells[statusCol].toLowerCase();
+              if (statusText.includes('high') || statusText.includes('elevated')) {
                 status = "high";
-              } else if (statusText.includes('low') || statusText.includes('below')) {
+              } else if (statusText.includes('low')) {
                 status = "low";
               }
             }
             
-            // Find matching parameter
-            for (const param of parameterKeys) {
+            // Try to match with known parameters
+            parameterKeys.forEach(param => {
               if (paramName.includes(param.toLowerCase()) || 
                   paramName.includes(bloodParameterInfo[param as keyof typeof bloodParameterInfo].name.toLowerCase())) {
-                results.push({ parameter: param, value, status });
-                break;
+                results.push({
+                  parameter: param,
+                  value: parseFloat(numMatch[1]),
+                  status
+                });
               }
-            }
+            });
           }
         }
       }
-    } else if (inTable) {
-      // We've left the table
+    } else {
       inTable = false;
-    }
-  }
-  
-  // If table processing didn't produce results, try line-by-line parsing
-  if (results.length === 0) {
-    for (const line of lines) {
-      // Look for common patterns like "Glucose: 105 mg/dL (HIGH)"
-      for (const param of parameterKeys) {
-        const paramName = bloodParameterInfo[param as keyof typeof bloodParameterInfo].name;
-        
-        if (line.toLowerCase().includes(paramName.toLowerCase()) || line.toLowerCase().includes(param.toLowerCase())) {
-          // Look for a numeric value
-          const valueMatch = line.match(/[:\s]([\d.]+)/);
-          
-          if (valueMatch && valueMatch[1]) {
-            const value = parseFloat(valueMatch[1]);
-            
-            // Determine status
+      
+      // Try line-by-line parsing for each parameter
+      parameterKeys.forEach(param => {
+        const paramInfo = bloodParameterInfo[param as keyof typeof bloodParameterInfo];
+        if (line.toLowerCase().includes(paramInfo.name.toLowerCase()) || 
+            line.toLowerCase().includes(param.toLowerCase())) {
+          const numMatch = line.match(/[:\s]([\d.]+)/);
+          if (numMatch) {
             let status = "normal";
-            const lowerCaseLine = line.toLowerCase();
-            if (lowerCaseLine.includes('high') || lowerCaseLine.includes('elevated') || lowerCaseLine.includes('abnormal')) {
+            const lcLine = line.toLowerCase();
+            if (lcLine.includes('high') || lcLine.includes('elevated')) {
               status = "high";
-            } else if (lowerCaseLine.includes('low') || lowerCaseLine.includes('decreased')) {
+            } else if (lcLine.includes('low')) {
               status = "low";
             }
             
-            results.push({ parameter: param, value, status });
-            break;
+            results.push({
+              parameter: param,
+              value: parseFloat(numMatch[1]),
+              status
+            });
           }
         }
-      }
+      });
     }
   }
   
-  // If still no results, try even more aggressive pattern matching
-  if (results.length === 0) {
-    for (const param of parameterKeys) {
-      const paramName = bloodParameterInfo[param as keyof typeof bloodParameterInfo].name.toLowerCase();
-      const paramRegex = new RegExp(`${paramName}[^\\d]+(\\d+\\.?\\d*)`, 'i');
-      const match = reportText.match(paramRegex);
+  // For parameters not found but mentioned in the text, try broader pattern matching
+  parameterKeys.forEach(param => {
+    if (!results.find(r => r.parameter === param)) {
+      const paramInfo = bloodParameterInfo[param as keyof typeof bloodParameterInfo];
+      const pattern = new RegExp(`${paramInfo.name}[^\\d]+(\\d+\\.?\\d*)`, 'i');
+      const match = reportText.match(pattern);
       
       if (match && match[1]) {
-        const value = parseFloat(match[1]);
         let status = "normal";
-        
-        // Check nearby text for status indicators
         const contextStart = Math.max(0, match.index! - 20);
         const contextEnd = Math.min(reportText.length, match.index! + match[0].length + 20);
         const context = reportText.substring(contextStart, contextEnd).toLowerCase();
         
-        if (context.includes('high') || context.includes('elevated') || context.includes('abnormal')) {
+        if (context.includes('high') || context.includes('elevated')) {
           status = "high";
-        } else if (context.includes('low') || context.includes('decreased')) {
+        } else if (context.includes('low')) {
           status = "low";
         }
         
-        results.push({ parameter: param, value, status });
+        results.push({
+          parameter: param,
+          value: parseFloat(match[1]),
+          status
+        });
       }
     }
-  }
+  });
   
-  console.log("Extracted parameter values:", results);
   return results;
 };
 
-// Calculate an overall health score based on parameter values
 const calculateHealthScore = (paramValues: { parameter: string; value: number; status: string }[]): number => {
   if (paramValues.length === 0) return 100; // Default perfect score
   
@@ -344,7 +307,7 @@ const ReportDetail = () => {
         console.log("Found report:", foundReport);
         
         // Extract relevant parameters from the report text
-        const extractedParams = extractParameters(foundReport.rawReport);
+        const extractedParams = Object.keys(bloodParameterInfo);
         setRelevantParameters(extractedParams);
         console.log("Extracted parameters:", extractedParams);
         
@@ -378,40 +341,61 @@ const ReportDetail = () => {
     }
   };
   
-  // Handle report download
+  // Update the download handler to generate PDF
   const handleDownload = () => {
     if (!report) return;
     
-    // Create the file content from report data
-    const content = `# ${report.filename}
-## Uploaded on ${new Date(report.uploadDate).toLocaleDateString()}
-
-${report.rawReport}
-
----
-Generated by Medical Reports Analyzer
-`;
+    // Create new PDF document
+    const doc = new jsPDF();
     
-    // Create a Blob with the content
-    const blob = new Blob([content], { type: 'text/markdown' });
+    // Add title
+    doc.setFontSize(20);
+    doc.text(report.filename, 20, 20);
     
-    // Create a download link and trigger it
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${report.filename.replace(/\.\w+$/, '')}-report.md`;
-    document.body.appendChild(a);
-    a.click();
+    // Add date
+    doc.setFontSize(12);
+    doc.text(`Generated on ${new Date(report.uploadDate).toLocaleDateString()}`, 20, 30);
     
-    // Clean up
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
+    // Add health score if available
+    if (healthScore) {
+      const status = getHealthStatus(healthScore);
+      doc.setFontSize(16);
+      doc.text("Health Overview", 20, 50);
+      doc.setFontSize(14);
+      doc.text(`Health Score: ${Math.round(healthScore)}`, 20, 60);
+      doc.text(`Status: ${status.status}`, 20, 70);
+    }
+    
+    // Add parameters section
+    if (parameterValues.length > 0) {
+      doc.setFontSize(16);
+      doc.text("Test Results", 20, 90);
+      
+      let yPos = 100;
+      parameterValues.forEach((param) => {
+        const refRange = referenceRanges[param.parameter as keyof typeof referenceRanges];
+        const paramName = bloodParameterInfo[param.parameter as keyof typeof bloodParameterInfo]?.name;
+        
+        doc.setFontSize(12);
+        doc.text(`${paramName}: ${param.value} ${refRange?.unit || ''}`, 20, yPos);
+        doc.text(`Status: ${param.status}`, 120, yPos);
+        
+        yPos += 10;
+        
+        // Add page if needed
+        if (yPos > 280) {
+          doc.addPage();
+          yPos = 20;
+        }
+      });
+    }
+    
+    // Save the PDF
+    doc.save(`${report.filename.replace(/\.\w+$/, '')}-report.pdf`);
     
     toast({
       title: "Report downloaded",
-      description: "Your report has been downloaded successfully",
+      description: "Your report has been downloaded as a PDF",
     });
   };
   
@@ -809,27 +793,4 @@ Generated by Medical Reports Analyzer
                         .slice(0, 5)
                         .map((param) => (
                           <AccordionItem value={param} key={param}>
-                            <AccordionTrigger className="text-left font-medium">
-                              What is {bloodParameterInfo[param as keyof typeof bloodParameterInfo]?.name}?
-                            </AccordionTrigger>
-                            <AccordionContent>
-                              <p className="text-gray-700">
-                                {bloodParameterInfo[param as keyof typeof bloodParameterInfo]?.description}
-                              </p>
-                            </AccordionContent>
-                          </AccordionItem>
-                        ))
-                      }
-                    </Accordion>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </main>
-    </div>
-  );
-};
-
-export default ReportDetail;
+                            <Accordion

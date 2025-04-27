@@ -1,4 +1,3 @@
-
 import React from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useReports } from "@/context/ReportContext";
@@ -8,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChevronLeft, Clock, FileText, Download } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { jsPDF } from "jspdf";
 
 const TimelineView = () => {
   const { user } = useAuth();
@@ -21,38 +21,47 @@ const TimelineView = () => {
     navigate("/dashboard");
   };
   
-  // Handle downloading all reports as a single file
+  // Handle downloading all reports as a PDF file
   const handleDownloadAll = () => {
     if (!userReports || userReports.length === 0) return;
     
-    // Create content with all reports
-    let content = `# Health Timeline Report\n\n`;
-    content += `Generated on ${new Date().toLocaleDateString()}\n\n`;
+    // Create new PDF document
+    const doc = new jsPDF();
+    
+    // Add title
+    doc.setFontSize(20);
+    doc.text("Health Timeline Report", 20, 20);
+    
+    // Add generation date
+    doc.setFontSize(12);
+    doc.text(`Generated on ${new Date().toLocaleDateString()}`, 20, 30);
+    
+    let yPosition = 50;
     
     // Add each report
     userReports.forEach((report, index) => {
-      content += `## ${index + 1}. ${report.filename}\n`;
-      content += `Date: ${new Date(report.uploadDate).toLocaleDateString()}\n\n`;
-      content += `${report.rawReport}\n\n`;
-      content += `---\n\n`;
+      // Add page break if needed
+      if (yPosition > 250) {
+        doc.addPage();
+        yPosition = 20;
+      }
+      
+      doc.setFontSize(16);
+      doc.text(`${index + 1}. ${report.filename}`, 20, yPosition);
+      yPosition += 10;
+      
+      doc.setFontSize(12);
+      doc.text(`Date: ${new Date(report.uploadDate).toLocaleDateString()}`, 20, yPosition);
+      yPosition += 10;
+      
+      // Split report text into lines to fit page width
+      const lines = doc.splitTextToSize(report.rawReport, 170);
+      doc.text(lines, 20, yPosition);
+      yPosition += 10 * lines.length + 20;
     });
     
-    // Create a Blob with the content
-    const blob = new Blob([content], { type: 'text/markdown' });
-    
-    // Create a download link and trigger it
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `health-timeline-report.md`;
-    document.body.appendChild(a);
-    a.click();
-    
-    // Clean up
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
+    // Save the PDF
+    doc.save(`health-timeline-report.pdf`);
   };
   
   return (
