@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -22,7 +23,8 @@ import {
   Shield,
   ThermometerSnowflake,
   ThermometerSun,
-  CalendarDays
+  CalendarDays,
+  Download
 } from "lucide-react";
 import Header from "@/components/Header";
 import {
@@ -145,39 +147,154 @@ const extractParameters = (reportText: string): string[] => {
   );
 };
 
-// Helper function to extract numerical values from the report text
+// Improved helper function to extract numerical values from the report text
 const extractParameterValues = (reportText: string): { parameter: string; value: number; status: string }[] => {
   const results: { parameter: string; value: number; status: string }[] = [];
   const parameterKeys = Object.keys(bloodParameterInfo);
   
-  // Use regex to find patterns like "Glucose: 105 mg/dL (HIGH)" or "Cholesterol: 180 mg/dL"
+  // Split the report into lines for easier processing
   const lines = reportText.split('\n');
   
+  // First try to find values in table format (most common in markdown)
+  // Look for the pattern | Parameter | Value | Status | or similar
+  let inTable = false;
+  let headerRow: string[] = [];
+  
   for (const line of lines) {
-    for (const param of parameterKeys) {
-      const paramName = bloodParameterInfo[param as keyof typeof bloodParameterInfo].name;
+    const trimmedLine = line.trim();
+    
+    // Skip empty lines
+    if (!trimmedLine) continue;
+    
+    // Check if we've entered a table (line contains multiple | characters)
+    if (trimmedLine.startsWith('|') && trimmedLine.endsWith('|') && (trimmedLine.match(/\|/g) || []).length >= 3) {
+      if (!inTable) {
+        // This might be the header row
+        inTable = true;
+        headerRow = trimmedLine
+          .split('|')
+          .map(cell => cell.trim().toLowerCase())
+          .filter(cell => cell !== '');
+        
+        continue;
+      }
       
-      if (line.toLowerCase().includes(paramName.toLowerCase()) || line.toLowerCase().includes(param.toLowerCase())) {
-        // Look for a numeric value in the line
-        const valueMatch = line.match(/:\s*([\d.]+)/);
-        if (valueMatch && valueMatch[1]) {
-          const value = parseFloat(valueMatch[1]);
+      // Skip separator row with dashes
+      if (trimmedLine.includes('---')) continue;
+      
+      // This is a data row
+      const cells = trimmedLine
+        .split('|')
+        .map(cell => cell.trim())
+        .filter(cell => cell !== '');
+      
+      if (cells.length >= 2) {
+        // Find which column has the parameter name and value
+        const paramColIndex = headerRow.findIndex(h => 
+          h.includes('parameter') || h.includes('test') || h.includes('name')
+        );
+        const valueColIndex = headerRow.findIndex(h => 
+          h.includes('value') || h.includes('result')
+        );
+        const statusColIndex = headerRow.findIndex(h => 
+          h.includes('status') || h.includes('range') || h.includes('flag')
+        );
+        
+        if (paramColIndex !== -1 && valueColIndex !== -1 && paramColIndex < cells.length && valueColIndex < cells.length) {
+          const paramName = cells[paramColIndex].toLowerCase();
+          const valueText = cells[valueColIndex];
+          const valueMatch = valueText.match(/(\d+\.?\d*)/);
           
-          // Check for status indicators (HIGH, LOW, NORMAL)
-          let status = "normal";
-          if (line.toLowerCase().includes("high") || line.toLowerCase().includes("elevated")) {
-            status = "high";
-          } else if (line.toLowerCase().includes("low") || line.toLowerCase().includes("decreased")) {
-            status = "low";
+          if (valueMatch) {
+            const value = parseFloat(valueMatch[0]);
+            
+            // Determine status
+            let status = "normal";
+            if (statusColIndex !== -1 && statusColIndex < cells.length) {
+              const statusText = cells[statusColIndex].toLowerCase();
+              if (statusText.includes('high') || statusText.includes('elevated') || statusText.includes('above')) {
+                status = "high";
+              } else if (statusText.includes('low') || statusText.includes('below')) {
+                status = "low";
+              }
+            }
+            
+            // Find matching parameter
+            for (const param of parameterKeys) {
+              if (paramName.includes(param.toLowerCase()) || 
+                  paramName.includes(bloodParameterInfo[param as keyof typeof bloodParameterInfo].name.toLowerCase())) {
+                results.push({ parameter: param, value, status });
+                break;
+              }
+            }
           }
+        }
+      }
+    } else if (inTable) {
+      // We've left the table
+      inTable = false;
+    }
+  }
+  
+  // If table processing didn't produce results, try line-by-line parsing
+  if (results.length === 0) {
+    for (const line of lines) {
+      // Look for common patterns like "Glucose: 105 mg/dL (HIGH)"
+      for (const param of parameterKeys) {
+        const paramName = bloodParameterInfo[param as keyof typeof bloodParameterInfo].name;
+        
+        if (line.toLowerCase().includes(paramName.toLowerCase()) || line.toLowerCase().includes(param.toLowerCase())) {
+          // Look for a numeric value
+          const valueMatch = line.match(/[:\s]([\d.]+)/);
           
-          results.push({ parameter: param, value, status });
-          break;
+          if (valueMatch && valueMatch[1]) {
+            const value = parseFloat(valueMatch[1]);
+            
+            // Determine status
+            let status = "normal";
+            const lowerCaseLine = line.toLowerCase();
+            if (lowerCaseLine.includes('high') || lowerCaseLine.includes('elevated') || lowerCaseLine.includes('abnormal')) {
+              status = "high";
+            } else if (lowerCaseLine.includes('low') || lowerCaseLine.includes('decreased')) {
+              status = "low";
+            }
+            
+            results.push({ parameter: param, value, status });
+            break;
+          }
         }
       }
     }
   }
   
+  // If still no results, try even more aggressive pattern matching
+  if (results.length === 0) {
+    for (const param of parameterKeys) {
+      const paramName = bloodParameterInfo[param as keyof typeof bloodParameterInfo].name.toLowerCase();
+      const paramRegex = new RegExp(`${paramName}[^\\d]+(\\d+\\.?\\d*)`, 'i');
+      const match = reportText.match(paramRegex);
+      
+      if (match && match[1]) {
+        const value = parseFloat(match[1]);
+        let status = "normal";
+        
+        // Check nearby text for status indicators
+        const contextStart = Math.max(0, match.index! - 20);
+        const contextEnd = Math.min(reportText.length, match.index! + match[0].length + 20);
+        const context = reportText.substring(contextStart, contextEnd).toLowerCase();
+        
+        if (context.includes('high') || context.includes('elevated') || context.includes('abnormal')) {
+          status = "high";
+        } else if (context.includes('low') || context.includes('decreased')) {
+          status = "low";
+        }
+        
+        results.push({ parameter: param, value, status });
+      }
+    }
+  }
+  
+  console.log("Extracted parameter values:", results);
   return results;
 };
 
@@ -224,13 +341,17 @@ const ReportDetail = () => {
       setReport(foundReport || null);
       
       if (foundReport) {
+        console.log("Found report:", foundReport);
+        
         // Extract relevant parameters from the report text
         const extractedParams = extractParameters(foundReport.rawReport);
         setRelevantParameters(extractedParams);
+        console.log("Extracted parameters:", extractedParams);
         
         // Extract parameter values for visualization
         const extractedValues = extractParameterValues(foundReport.rawReport);
         setParameterValues(extractedValues);
+        console.log("Extracted values:", extractedValues);
         
         // Calculate health score
         const score = calculateHealthScore(extractedValues);
@@ -255,6 +376,43 @@ const ReportDetail = () => {
       });
       navigate("/dashboard");
     }
+  };
+  
+  // Handle report download
+  const handleDownload = () => {
+    if (!report) return;
+    
+    // Create the file content from report data
+    const content = `# ${report.filename}
+## Uploaded on ${new Date(report.uploadDate).toLocaleDateString()}
+
+${report.rawReport}
+
+---
+Generated by Medical Reports Analyzer
+`;
+    
+    // Create a Blob with the content
+    const blob = new Blob([content], { type: 'text/markdown' });
+    
+    // Create a download link and trigger it
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${report.filename.replace(/\.\w+$/, '')}-report.md`;
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    
+    toast({
+      title: "Report downloaded",
+      description: "Your report has been downloaded successfully",
+    });
   };
   
   // Prepare chart data
@@ -339,14 +497,25 @@ const ReportDetail = () => {
             Back to Dashboard
           </Button>
           
-          <Button 
-            variant="outline" 
-            className="text-red-500 border-red-200 hover:bg-red-50" 
-            onClick={handleDelete}
-          >
-            <Trash2 className="h-4 w-4 mr-2" />
-            Delete Report
-          </Button>
+          <div className="flex space-x-3">
+            <Button 
+              variant="outline" 
+              className="text-medical-primary border-medical-light hover:bg-medical-light/20" 
+              onClick={handleDownload}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Download Report
+            </Button>
+            
+            <Button 
+              variant="outline" 
+              className="text-red-500 border-red-200 hover:bg-red-50" 
+              onClick={handleDelete}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Report
+            </Button>
+          </div>
         </div>
         
         <div className="max-w-4xl mx-auto">
@@ -580,8 +749,17 @@ const ReportDetail = () => {
           
           {/* Report content */}
           <Card className="mb-6">
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Report Details</CardTitle>
+              <Button 
+                variant="outline"
+                size="sm" 
+                className="text-medical-primary border-medical-light hover:bg-medical-light/20" 
+                onClick={handleDownload}
+              >
+                <Download className="h-4 w-4 mr-1" />
+                Download
+              </Button>
             </CardHeader>
             <CardContent className="py-4">
               <div className="markdown prose max-w-none">
