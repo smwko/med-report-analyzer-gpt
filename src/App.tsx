@@ -10,6 +10,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import ReportDetail from "./pages/ReportDetail";
+import TimelineView from "./pages/TimelineView";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -40,6 +41,14 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <ReportDetail />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/timeline" 
+                element={
+                  <ProtectedRoute>
+                    <TimelineView />
                   </ProtectedRoute>
                 } 
               />

@@ -6,7 +6,18 @@ import { useReports, Report } from "@/context/ReportContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
-import { PlusCircle, FileText, Clock, AlertCircle, CheckCircle, Loader2, User, LogOut, Upload } from "lucide-react";
+import { 
+  PlusCircle, 
+  FileText, 
+  Clock, 
+  AlertCircle, 
+  CheckCircle, 
+  Loader2, 
+  User, 
+  LogOut, 
+  Upload,
+  LineChart
+} from "lucide-react";
 import Header from "@/components/Header";
 
 const Dashboard = () => {
@@ -88,6 +99,11 @@ const Dashboard = () => {
   // Handle report click
   const handleReportClick = (report: Report) => {
     navigate(`/report/${report.id}`);
+  };
+  
+  // Navigate to timeline view
+  const navigateToTimeline = () => {
+    navigate("/timeline");
   };
   
   // Handle logout
@@ -202,6 +218,23 @@ const Dashboard = () => {
             </CardContent>
           </Card>
         </div>
+        
+        {/* Timeline View Button */}
+        {userReports.length > 0 && (
+          <div className="mb-6">
+            <Button 
+              onClick={navigateToTimeline}
+              variant="outline" 
+              className="w-full flex items-center justify-center gap-2 py-6 border-dashed"
+            >
+              <LineChart className="h-5 w-5 text-medical-primary" />
+              <span className="font-medium">View Health Timeline</span>
+              <span className="text-sm text-gray-500 ml-2">
+                Track your progress and see how your results change over time
+              </span>
+            </Button>
+          </div>
+        )}
         
         {/* Recent reports */}
         <h2 className="text-xl font-bold mb-4">Your Reports</h2>
