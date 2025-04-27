@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -140,126 +139,125 @@ const referenceRanges = {
   ast: { min: 10, max: 40, unit: "U/L" }
 };
 
-// Updated parameter extraction function to get ALL parameters
+// Function to calculate normalized value (0-100) based on how far a value is from the reference range
+const calculateNormalizedValue = (value: number, min: number, max: number): number => {
+  // If value is within range, score is 100
+  if (value >= min && value <= max) {
+    return 100;
+  }
+
+  // Calculate how far the value deviates from the nearest boundary
+  const midpoint = (max + min) / 2;
+  const range = max - min;
+  const deviation = Math.abs(value - midpoint) / range;
+  
+  // Apply exponential decay to the score based on deviation
+  // The further from normal range, the more rapidly the score drops
+  let score = 100 * Math.exp(-2 * deviation);
+  
+  // Ensure score is between 0 and 100
+  return Math.max(0, Math.min(100, score));
+};
+
+// Update parameter extraction function to be more thorough
 const extractParameterValues = (reportText: string): { parameter: string; value: number; status: string }[] => {
   const results: { parameter: string; value: number; status: string }[] = [];
   const parameterKeys = Object.keys(bloodParameterInfo);
-  const lines = reportText.split('\n');
-  
-  let inTable = false;
-  let headerRow: string[] = [];
-  
-  // First try table format
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    
-    if (line.includes('|') && (line.match(/\|/g) || []).length >= 3) {
-      if (!inTable) {
-        inTable = true;
-        headerRow = line.split('|')
-          .map(cell => cell.trim().toLowerCase())
-          .filter(cell => cell !== '');
-        continue;
-      }
+  const lines = reportText.toLowerCase().split('\n');
+
+  // Common patterns for finding values
+  const valuePatterns = [
+    /[\s:]\s*([\d.]+)\s*(?:[a-z\/µ]*)/i,  // Basic number pattern
+    /value[:\s]+([\d.]+)/i,                // Value: X pattern
+    /result[:\s]+([\d.]+)/i,               // Result: X pattern
+    /level[:\s]+([\d.]+)/i,                // Level: X pattern
+  ];
+
+  // Search through each line for any parameter mentions
+  lines.forEach(line => {
+    parameterKeys.forEach(param => {
+      const paramInfo = bloodParameterInfo[param as keyof typeof bloodParameterInfo];
+      const refRange = referenceRanges[param as keyof typeof referenceRanges];
       
-      if (line.includes('---')) continue;
-      
-      const cells = line.split('|')
-        .map(cell => cell.trim())
-        .filter(cell => cell !== '');
-      
-      if (cells.length >= 2) {
-        const paramCol = headerRow.findIndex(h => h.includes('parameter') || h.includes('test'));
-        const valueCol = headerRow.findIndex(h => h.includes('value') || h.includes('result'));
-        const statusCol = headerRow.findIndex(h => h.includes('status') || h.includes('range'));
-        
-        if (paramCol !== -1 && valueCol !== -1) {
-          const paramName = cells[paramCol].toLowerCase();
-          const valueText = cells[valueCol];
-          const numMatch = valueText.match(/(\d+\.?\d*)/);
-          
-          if (numMatch) {
-            let status = "normal";
-            if (statusCol !== -1) {
-              const statusText = cells[statusCol].toLowerCase();
-              if (statusText.includes('high') || statusText.includes('elevated')) {
-                status = "high";
-              } else if (statusText.includes('low')) {
-                status = "low";
+      // Check if this line contains the parameter name (try different variations)
+      if (
+        line.includes(param.toLowerCase()) || 
+        line.includes(paramInfo.name.toLowerCase())
+      ) {
+        // Try each pattern to find a value
+        for (const pattern of valuePatterns) {
+          const match = line.match(pattern);
+          if (match && match[1]) {
+            const value = parseFloat(match[1]);
+            if (!isNaN(value)) {
+              // Determine status based on reference range
+              let status = "normal";
+              if (refRange) {
+                if (value > refRange.max) {
+                  status = "high";
+                } else if (value < refRange.min) {
+                  status = "low";
+                }
+              } else {
+                // If no reference range, try to infer status from text
+                if (line.includes('high') || line.includes('elevated')) {
+                  status = "high";
+                } else if (line.includes('low') || line.includes('decreased')) {
+                  status = "low";
+                }
               }
-            }
-            
-            // Try to match with known parameters
-            parameterKeys.forEach(param => {
-              if (paramName.includes(param.toLowerCase()) || 
-                  paramName.includes(bloodParameterInfo[param as keyof typeof bloodParameterInfo].name.toLowerCase())) {
+
+              // Add to results if we haven't already found this parameter
+              if (!results.find(r => r.parameter === param)) {
                 results.push({
                   parameter: param,
-                  value: parseFloat(numMatch[1]),
+                  value,
                   status
                 });
               }
-            });
+              break; // Found a value, stop trying patterns
+            }
           }
         }
       }
-    } else {
-      inTable = false;
-      
-      // Try line-by-line parsing for each parameter
-      parameterKeys.forEach(param => {
-        const paramInfo = bloodParameterInfo[param as keyof typeof bloodParameterInfo];
-        if (line.toLowerCase().includes(paramInfo.name.toLowerCase()) || 
-            line.toLowerCase().includes(param.toLowerCase())) {
-          const numMatch = line.match(/[:\s]([\d.]+)/);
-          if (numMatch) {
-            let status = "normal";
-            const lcLine = line.toLowerCase();
-            if (lcLine.includes('high') || lcLine.includes('elevated')) {
-              status = "high";
-            } else if (lcLine.includes('low')) {
-              status = "low";
-            }
-            
-            results.push({
-              parameter: param,
-              value: parseFloat(numMatch[1]),
-              status
-            });
-          }
-        }
-      });
-    }
-  }
-  
-  // For parameters not found but mentioned in the text, try broader pattern matching
+    });
+  });
+
+  // For each parameter in bloodParameterInfo that wasn't found, try one more time with broader search
   parameterKeys.forEach(param => {
     if (!results.find(r => r.parameter === param)) {
       const paramInfo = bloodParameterInfo[param as keyof typeof bloodParameterInfo];
-      const pattern = new RegExp(`${paramInfo.name}[^\\d]+(\\d+\\.?\\d*)`, 'i');
-      const match = reportText.match(pattern);
+      const searchText = reportText.toLowerCase();
+      const widerContext = 100; // Characters to look around parameter mention
       
-      if (match && match[1]) {
-        let status = "normal";
-        const contextStart = Math.max(0, match.index! - 20);
-        const contextEnd = Math.min(reportText.length, match.index! + match[0].length + 20);
-        const context = reportText.substring(contextStart, contextEnd).toLowerCase();
-        
-        if (context.includes('high') || context.includes('elevated')) {
-          status = "high";
-        } else if (context.includes('low')) {
-          status = "low";
+      const nameIndex = searchText.indexOf(paramInfo.name.toLowerCase());
+      if (nameIndex !== -1) {
+        const contextStart = Math.max(0, nameIndex - widerContext);
+        const contextEnd = Math.min(searchText.length, nameIndex + paramInfo.name.length + widerContext);
+        const context = searchText.slice(contextStart, contextEnd);
+
+        for (const pattern of valuePatterns) {
+          const match = context.match(pattern);
+          if (match && match[1]) {
+            const value = parseFloat(match[1]);
+            if (!isNaN(value)) {
+              const refRange = referenceRanges[param as keyof typeof referenceRanges];
+              let status = "normal";
+              
+              if (refRange) {
+                if (value > refRange.max) status = "high";
+                else if (value < refRange.min) status = "low";
+              }
+
+              results.push({ parameter: param, value, status });
+              break;
+            }
+          }
         }
-        
-        results.push({
-          parameter: param,
-          value: parseFloat(match[1]),
-          status
-        });
       }
     }
   });
-  
+
   return results;
 };
 
@@ -273,11 +271,11 @@ const calculateHealthScore = (paramValues: { parameter: string; value: number; s
   return Math.max(0, 100 - (abnormalCount / totalCount) * 100);
 };
 
-// Get health status based on the health score
+// Update getHealthStatus function to use new scoring
 const getHealthStatus = (score: number): { status: string; color: string; icon: React.ReactNode } => {
-  if (score >= 90) {
+  if (score >= 85) {
     return { status: "Excellent", color: "#22c55e", icon: <Shield className="h-5 w-5" /> };
-  } else if (score >= 75) {
+  } else if (score >= 70) {
     return { status: "Good", color: "#84cc16", icon: <ThermometerSnowflake className="h-5 w-5" /> };
   } else if (score >= 50) {
     return { status: "Fair", color: "#eab308", icon: <ThermometerSun className="h-5 w-5" /> };
@@ -400,18 +398,20 @@ const ReportDetail = () => {
     });
   };
   
-  // Prepare chart data
+  // Update chart data preparation
   const chartData = parameterValues.map(param => {
     const refRange = referenceRanges[param.parameter as keyof typeof referenceRanges];
-    const normalizedValue = refRange ? 
-      ((param.value - refRange.min) / (refRange.max - refRange.min)) * 100 : 
-      50; // Default to middle if no reference
+    let normalizedValue = 50; // Default to middle if no reference
+    
+    if (refRange) {
+      normalizedValue = calculateNormalizedValue(param.value, refRange.min, refRange.max);
+    }
       
     return {
       name: bloodParameterInfo[param.parameter as keyof typeof bloodParameterInfo]?.name || param.parameter,
       value: param.value,
       status: param.status,
-      normalizedValue: Math.min(Math.max(normalizedValue, 0), 100) // Keep between 0-100
+      normalizedValue
     };
   });
   
@@ -793,27 +793,4 @@ const ReportDetail = () => {
                         .filter(param => !relevantParameters.includes(param))
                         .slice(0, 5)
                         .map((param) => (
-                          <AccordionItem value={param} key={param}>
-                            <AccordionTrigger className="text-left font-medium">
-                              What is {bloodParameterInfo[param as keyof typeof bloodParameterInfo]?.name}?
-                            </AccordionTrigger>
-                            <AccordionContent>
-                              <p className="text-gray-700">
-                                {bloodParameterInfo[param as keyof typeof bloodParameterInfo]?.description}
-                              </p>
-                            </AccordionContent>
-                          </AccordionItem>
-                        ))}
-                    </Accordion>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </main>
-    </div>
-  );
-};
-
-export default ReportDetail;
+                          <AccordionItem value={
