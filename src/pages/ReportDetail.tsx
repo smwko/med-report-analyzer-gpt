@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -793,4 +794,27 @@ const ReportDetail = () => {
                         .filter(param => !relevantParameters.includes(param))
                         .slice(0, 5)
                         .map((param) => (
-                          <AccordionItem value={
+                          <AccordionItem value={param} key={param}>
+                            <AccordionTrigger className="text-left font-medium">
+                              What is {bloodParameterInfo[param as keyof typeof bloodParameterInfo]?.name}?
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <p className="text-gray-700">
+                                {bloodParameterInfo[param as keyof typeof bloodParameterInfo]?.description}
+                              </p>
+                            </AccordionContent>
+                          </AccordionItem>
+                        ))}
+                    </Accordion>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default ReportDetail;
