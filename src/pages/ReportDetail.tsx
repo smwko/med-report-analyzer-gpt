@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -924,12 +923,13 @@ const ReportDetail = () => {
                   </AccordionTrigger>
                   <AccordionContent>
                     <div className="bg-gray-50 p-4 rounded-lg">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        className="prose prose-sm max-w-none"
-                      >
-                        {report.rawReport}
-                      </ReactMarkdown>
+                      <div className="prose prose-sm max-w-none">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                        >
+                          {report.rawReport}
+                        </ReactMarkdown>
+                      </div>
                     </div>
                   </AccordionContent>
                 </AccordionItem>
