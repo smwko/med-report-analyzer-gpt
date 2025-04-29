@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -7,6 +6,14 @@ import { useReports, Report } from "@/context/ReportContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { 
   ChevronLeft, 
   FileText, 
@@ -57,7 +64,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { jsPDF } from "jspdf";
 
-// Common blood test parameters with explanations
+// Common blood test parameters with explanations - now serves as a reference, not a limiter
 const bloodParameterInfo = {
   glucose: {
     name: "Glucose",
@@ -121,7 +128,7 @@ const bloodParameterInfo = {
   }
 };
 
-// Reference ranges for common parameters (for visual comparison)
+// Reference ranges for common parameters (for visual comparison) - now serves as a reference, not a limiter
 const referenceRanges = {
   glucose: { min: 70, max: 100, unit: "mg/dL" },
   cholesterol: { min: 125, max: 200, unit: "mg/dL" },
@@ -160,97 +167,210 @@ const calculateNormalizedValue = (value: number, min: number, max: number): numb
   return Math.max(0, Math.min(100, score));
 };
 
-// Update parameter extraction function to be more thorough
-const extractParameterValues = (reportText: string): { parameter: string; value: number; status: string }[] => {
-  const results: { parameter: string; value: number; status: string }[] = [];
-  const parameterKeys = Object.keys(bloodParameterInfo);
-  const lines = reportText.toLowerCase().split('\n');
-
-  // Common patterns for finding values
-  const valuePatterns = [
-    /[\s:]\s*([\d.]+)\s*(?:[a-z\/µ]*)/i,  // Basic number pattern
-    /value[:\s]+([\d.]+)/i,                // Value: X pattern
-    /result[:\s]+([\d.]+)/i,               // Result: X pattern
-    /level[:\s]+([\d.]+)/i,                // Level: X pattern
+// Updated parameter extraction function to detect ALL parameters
+const extractParameterValues = (reportText: string): { parameter: string; name: string; value: number; unit: string; status: string; referenceRange?: { min: number; max: number } }[] => {
+  const results: { parameter: string; name: string; value: number; unit: string; status: string; referenceRange?: { min: number; max: number } }[] = [];
+  
+  // Get known parameters as a starting point
+  const knownParameterKeys = Object.keys(bloodParameterInfo);
+  
+  const lines = reportText.split('\n');
+  
+  // Regular expressions for more comprehensive detection
+  const parameterPatterns = [
+    /([A-Za-z]+(?:[- ][A-Za-z]+)*)\s*[:=]\s*([\d.]+)\s*([a-zA-Z/%µ]*)/i,  // Parameter: 123 unit
+    /([A-Za-z]+(?:[- ][A-Za-z]+)*)\s*(?:level|result|value|count)[:=\s]+([\d.]+)\s*([a-zA-Z/%µ]*)/i,  // Parameter level: 123 unit
+    /([A-Za-z]+(?:[- ][A-Za-z]+)*)\s+([\d.]+)\s*([a-zA-Z/%µ]*)/i  // Parameter 123 unit
+  ];
+  
+  // Regular expressions for reference ranges
+  const refRangePatterns = [
+    /reference(?:\s*range)?[:=\s]+([\d.]+)[-–—to]+\s*([\d.]+)/i,  // Reference range: X-Y
+    /normal(?:\s*range)?[:=\s]+([\d.]+)[-–—to]+\s*([\d.]+)/i,     // Normal range: X-Y
+    /range[:=\s]+([\d.]+)[-–—to]+\s*([\d.]+)/i,                   // Range: X-Y
+    /\(([\d.]+)[-–—to]+\s*([\d.]+)\)/i                            // (X-Y)
   ];
 
-  // Search through each line for any parameter mentions
-  lines.forEach(line => {
-    parameterKeys.forEach(param => {
-      const paramInfo = bloodParameterInfo[param as keyof typeof bloodParameterInfo];
-      const refRange = referenceRanges[param as keyof typeof referenceRanges];
+  // First, search for table patterns in the report
+  const tablePattern = /\|([^|]+)\|([^|]+)\|(?:[^|]+\|)?(?:[^|]+\|)?/g;
+  let tableMatch;
+  while ((tableMatch = tablePattern.exec(reportText)) !== null) {
+    if (tableMatch.length >= 3) {
+      const parameterName = tableMatch[1].trim();
+      const valueText = tableMatch[2].trim();
       
-      // Check if this line contains the parameter name (try different variations)
-      if (
-        line.includes(param.toLowerCase()) || 
-        line.includes(paramInfo.name.toLowerCase())
-      ) {
-        // Try each pattern to find a value
-        for (const pattern of valuePatterns) {
-          const match = line.match(pattern);
-          if (match && match[1]) {
-            const value = parseFloat(match[1]);
-            if (!isNaN(value)) {
-              // Determine status based on reference range
-              let status = "normal";
-              if (refRange) {
-                if (value > refRange.max) {
-                  status = "high";
-                } else if (value < refRange.min) {
-                  status = "low";
-                }
-              } else {
-                // If no reference range, try to infer status from text
-                if (line.includes('high') || line.includes('elevated')) {
-                  status = "high";
-                } else if (line.includes('low') || line.includes('decreased')) {
-                  status = "low";
-                }
+      // Extract value and unit
+      const valueMatch = valueText.match(/([\d.]+)\s*([a-zA-Z/%µ]*)/i);
+      if (valueMatch && valueMatch.length >= 2) {
+        const value = parseFloat(valueMatch[1]);
+        if (!isNaN(value)) {
+          const unit = valueMatch[2] || '';
+          
+          // Normalize the parameter name to create a unique key
+          const parameterKey = parameterName.toLowerCase().replace(/[-\s]/g, '_');
+          
+          // Look for status indicators in the vicinity
+          const isHigh = tableMatch[0].toLowerCase().includes('high') || 
+                         tableMatch[0].toLowerCase().includes('elevated') ||
+                         tableMatch[0].toLowerCase().includes('above');
+          const isLow = tableMatch[0].toLowerCase().includes('low') || 
+                        tableMatch[0].toLowerCase().includes('decreased') ||
+                        tableMatch[0].toLowerCase().includes('below');
+          const status = isHigh ? "high" : isLow ? "low" : "normal";
+          
+          // Look for reference range
+          let referenceRange;
+          for (const pattern of refRangePatterns) {
+            const rangeMatch = tableMatch[0].match(pattern);
+            if (rangeMatch && rangeMatch.length >= 3) {
+              const min = parseFloat(rangeMatch[1]);
+              const max = parseFloat(rangeMatch[2]);
+              if (!isNaN(min) && !isNaN(max)) {
+                referenceRange = { min, max };
+                break;
               }
-
-              // Add to results if we haven't already found this parameter
-              if (!results.find(r => r.parameter === param)) {
-                results.push({
-                  parameter: param,
-                  value,
-                  status
-                });
-              }
-              break; // Found a value, stop trying patterns
             }
           }
+          
+          results.push({
+            parameter: parameterKey,
+            name: parameterName,
+            value,
+            unit,
+            status,
+            referenceRange
+          });
         }
       }
-    });
+    }
+  }
+  
+  // Second, go through each line to find parameters
+  lines.forEach(line => {
+    // Skip lines that are likely headers or don't contain data
+    if (line.trim().length < 5 || /^[-=|]+$/.test(line) || line.split(' ').length < 2) {
+      return;
+    }
+    
+    // Try each parameter pattern
+    for (const pattern of parameterPatterns) {
+      const match = line.match(pattern);
+      if (match && match.length >= 3) {
+        const parameterName = match[1].trim();
+        const value = parseFloat(match[2]);
+        
+        if (!isNaN(value)) {
+          const unit = match[3] ? match[3].trim() : '';
+          
+          // Normalize the parameter name to create a unique key
+          const parameterKey = parameterName.toLowerCase().replace(/[-\s]/g, '_');
+          
+          // Check if we already found this parameter
+          if (results.some(r => r.parameter === parameterKey)) {
+            continue;
+          }
+          
+          // Determine status based on text hints
+          const lowercaseLine = line.toLowerCase();
+          let status = "normal";
+          
+          if (lowercaseLine.includes('high') || lowercaseLine.includes('elevated') || lowercaseLine.includes('above')) {
+            status = "high";
+          } else if (lowercaseLine.includes('low') || lowercaseLine.includes('decreased') || lowercaseLine.includes('below')) {
+            status = "low";
+          }
+          
+          // Try to find reference range in this line
+          let referenceRange;
+          for (const rangePattern of refRangePatterns) {
+            const rangeMatch = lowercaseLine.match(rangePattern);
+            if (rangeMatch && rangeMatch.length >= 3) {
+              const min = parseFloat(rangeMatch[1]);
+              const max = parseFloat(rangeMatch[2]);
+              if (!isNaN(min) && !isNaN(max)) {
+                referenceRange = { min, max };
+                break;
+              }
+            }
+          }
+          
+          // If we have a known reference range, use it and update status
+          const knownKey = knownParameterKeys.find(key => {
+            const info = bloodParameterInfo[key as keyof typeof bloodParameterInfo];
+            return info.name.toLowerCase() === parameterName.toLowerCase() || key === parameterKey;
+          });
+          
+          if (knownKey) {
+            const knownRange = referenceRanges[knownKey as keyof typeof referenceRanges];
+            if (knownRange && !referenceRange) {
+              referenceRange = knownRange;
+              
+              // Update status based on known reference range
+              if (value > knownRange.max) {
+                status = "high";
+              } else if (value < knownRange.min) {
+                status = "low";
+              } else {
+                status = "normal";
+              }
+            }
+          }
+          
+          // Add to results
+          results.push({
+            parameter: parameterKey,
+            name: parameterName,
+            value,
+            unit,
+            status,
+            referenceRange
+          });
+          
+          // Found a match, no need to try other patterns for this line
+          break;
+        }
+      }
+    }
   });
-
-  // For each parameter in bloodParameterInfo that wasn't found, try one more time with broader search
-  parameterKeys.forEach(param => {
+  
+  // Third, check for well-known parameters by name if they haven't been found yet
+  knownParameterKeys.forEach(param => {
     if (!results.find(r => r.parameter === param)) {
       const paramInfo = bloodParameterInfo[param as keyof typeof bloodParameterInfo];
       const searchText = reportText.toLowerCase();
-      const widerContext = 100; // Characters to look around parameter mention
-      
       const nameIndex = searchText.indexOf(paramInfo.name.toLowerCase());
+      
       if (nameIndex !== -1) {
-        const contextStart = Math.max(0, nameIndex - widerContext);
-        const contextEnd = Math.min(searchText.length, nameIndex + paramInfo.name.length + widerContext);
+        // Found a mention of this parameter, grab the surrounding context
+        const contextStart = Math.max(0, nameIndex - 100);
+        const contextEnd = Math.min(searchText.length, nameIndex + paramInfo.name.length + 100);
         const context = searchText.slice(contextStart, contextEnd);
-
-        for (const pattern of valuePatterns) {
+        
+        // Try to extract value
+        for (const pattern of parameterPatterns) {
           const match = context.match(pattern);
-          if (match && match[1]) {
-            const value = parseFloat(match[1]);
+          if (match && match.length >= 3) {
+            const value = parseFloat(match[2]);
+            
             if (!isNaN(value)) {
+              const unit = match[3] ? match[3].trim() : '';
               const refRange = referenceRanges[param as keyof typeof referenceRanges];
-              let status = "normal";
               
+              let status = "normal";
               if (refRange) {
                 if (value > refRange.max) status = "high";
                 else if (value < refRange.min) status = "low";
               }
-
-              results.push({ parameter: param, value, status });
+              
+              results.push({
+                parameter: param,
+                name: paramInfo.name,
+                value,
+                unit: unit || (refRange?.unit || ''),
+                status,
+                referenceRange: refRange
+              });
+              
               break;
             }
           }
@@ -258,11 +378,13 @@ const extractParameterValues = (reportText: string): { parameter: string; value:
       }
     }
   });
-
-  return results;
+  
+  // Sort by name
+  return results.sort((a, b) => a.name.localeCompare(b.name));
 };
 
-const calculateHealthScore = (paramValues: { parameter: string; value: number; status: string }[]): number => {
+// Updated to use parameter info from extraction
+const calculateHealthScore = (paramValues: { parameter: string; name: string; value: number; status: string }[]): number => {
   if (paramValues.length === 0) return 100; // Default perfect score
   
   const abnormalCount = paramValues.filter(p => p.status !== "normal").length;
@@ -270,6 +392,21 @@ const calculateHealthScore = (paramValues: { parameter: string; value: number; s
   
   // Score starts at 100 and decreases based on abnormal parameters
   return Math.max(0, 100 - (abnormalCount / totalCount) * 100);
+};
+
+// Function to get parameter description either from known info or generate a generic one
+const getParameterDescription = (param: { parameter: string; name: string }): string => {
+  const knownKey = Object.keys(bloodParameterInfo).find(key => 
+    key === param.parameter || 
+    bloodParameterInfo[key as keyof typeof bloodParameterInfo].name.toLowerCase() === param.name.toLowerCase()
+  );
+  
+  if (knownKey) {
+    return bloodParameterInfo[knownKey as keyof typeof bloodParameterInfo].description;
+  }
+  
+  // Generate a generic description
+  return `${param.name} is a blood test parameter that provides information about your health. Abnormal levels may indicate health issues that should be discussed with your healthcare provider.`;
 };
 
 // Update getHealthStatus function to use new scoring
@@ -290,10 +427,9 @@ const ReportDetail = () => {
   const { reports, deleteReport } = useReports();
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
-  const [relevantParameters, setRelevantParameters] = useState<string[]>([]);
-  const [parameterValues, setParameterValues] = useState<{ parameter: string; value: number; status: string }[]>([]);
+  const [parameterValues, setParameterValues] = useState<{ parameter: string; name: string; value: number; unit: string; status: string; referenceRange?: { min: number; max: number } }[]>([]);
   const [healthScore, setHealthScore] = useState(100);
-  const [chartViewMode, setChartViewMode] = useState<"bars" | "gauge">("bars");
+  const [chartViewMode, setChartViewMode] = useState<"bars" | "gauge" | "table">("bars");
   const navigate = useNavigate();
   const { toast } = useToast();
   
@@ -306,12 +442,7 @@ const ReportDetail = () => {
       if (foundReport) {
         console.log("Found report:", foundReport);
         
-        // Extract relevant parameters from the report text
-        const extractedParams = Object.keys(bloodParameterInfo);
-        setRelevantParameters(extractedParams);
-        console.log("Extracted parameters:", extractedParams);
-        
-        // Extract parameter values for visualization
+        // Extract parameter values for visualization using our enhanced extractor
         const extractedValues = extractParameterValues(foundReport.rawReport);
         setParameterValues(extractedValues);
         console.log("Extracted values:", extractedValues);
@@ -341,7 +472,7 @@ const ReportDetail = () => {
     }
   };
   
-  // Update the download handler to generate PDF
+  // Update the download handler to generate PDF with all parameters
   const handleDownload = () => {
     if (!report) return;
     
@@ -366,18 +497,15 @@ const ReportDetail = () => {
       doc.text(`Status: ${status.status}`, 20, 70);
     }
     
-    // Add parameters section
+    // Add parameters section - now includes all parameters
     if (parameterValues.length > 0) {
       doc.setFontSize(16);
       doc.text("Test Results", 20, 90);
       
       let yPos = 100;
       parameterValues.forEach((param) => {
-        const refRange = referenceRanges[param.parameter as keyof typeof referenceRanges];
-        const paramName = bloodParameterInfo[param.parameter as keyof typeof bloodParameterInfo]?.name;
-        
         doc.setFontSize(12);
-        doc.text(`${paramName}: ${param.value} ${refRange?.unit || ''}`, 20, yPos);
+        doc.text(`${param.name}: ${param.value} ${param.unit || ''}`, 20, yPos);
         doc.text(`Status: ${param.status}`, 120, yPos);
         
         yPos += 10;
@@ -399,18 +527,19 @@ const ReportDetail = () => {
     });
   };
   
-  // Update chart data preparation
+  // Update chart data preparation to include all parameters
   const chartData = parameterValues.map(param => {
-    const refRange = referenceRanges[param.parameter as keyof typeof referenceRanges];
     let normalizedValue = 50; // Default to middle if no reference
     
-    if (refRange) {
-      normalizedValue = calculateNormalizedValue(param.value, refRange.min, refRange.max);
+    // If we have a reference range, calculate normalized value
+    if (param.referenceRange) {
+      normalizedValue = calculateNormalizedValue(param.value, param.referenceRange.min, param.referenceRange.max);
     }
       
     return {
-      name: bloodParameterInfo[param.parameter as keyof typeof bloodParameterInfo]?.name || param.parameter,
+      name: param.name,
       value: param.value,
+      unit: param.unit || '',
       status: param.status,
       normalizedValue
     };
@@ -579,9 +708,40 @@ const ReportDetail = () => {
                     {healthStatusInfo.status !== "Excellent" && (
                       <div className="mt-2 flex items-center">
                         <CalendarDays className="h-4 w-4 mr-1 text-blue-500" />
-                        <span className="text-sm text-blue-600">Recommended follow-up: {healthStatusInfo.status === "Needs Attention" ? "1-2 weeks" : healthStatusInfo.status === "Fair" ? "1-2 months" : "3-6 months"}</span>
+                        <span className="text-sm text-blue-600">
+                          Recommended follow-up: {healthStatusInfo.status === "Needs Attention" ? "1-2 weeks" : healthStatusInfo.status === "Fair" ? "1-2 months" : "3-6 months"}
+                        </span>
                       </div>
                     )}
+                    
+                    {/* Count summary of parameters */}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="bg-gray-100 px-3 py-1 rounded-full text-sm flex items-center">
+                        <span className="font-medium">{parameterValues.length}</span>
+                        <span className="ml-1 text-gray-600">Parameters Found</span>
+                      </div>
+                      
+                      {parameterValues.filter(p => p.status === "high").length > 0 && (
+                        <div className="bg-red-50 px-3 py-1 rounded-full text-sm flex items-center text-red-700">
+                          <span className="font-medium">{parameterValues.filter(p => p.status === "high").length}</span>
+                          <span className="ml-1">High</span>
+                        </div>
+                      )}
+                      
+                      {parameterValues.filter(p => p.status === "low").length > 0 && (
+                        <div className="bg-blue-50 px-3 py-1 rounded-full text-sm flex items-center text-blue-700">
+                          <span className="font-medium">{parameterValues.filter(p => p.status === "low").length}</span>
+                          <span className="ml-1">Low</span>
+                        </div>
+                      )}
+                      
+                      {parameterValues.filter(p => p.status === "normal").length > 0 && (
+                        <div className="bg-green-50 px-3 py-1 rounded-full text-sm flex items-center text-green-700">
+                          <span className="font-medium">{parameterValues.filter(p => p.status === "normal").length}</span>
+                          <span className="ml-1">Normal</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -605,216 +765,4 @@ const ReportDetail = () => {
                       onClick={() => setChartViewMode("bars")}
                       className="flex items-center"
                     >
-                      <BarChart3 className="h-4 w-4 mr-1" />
-                      Bar View
-                    </Button>
-                    <Button 
-                      variant={chartViewMode === "gauge" ? "default" : "outline"} 
-                      size="sm"
-                      onClick={() => setChartViewMode("gauge")}
-                      className="flex items-center"
-                    >
-                      <Gauge className="h-4 w-4 mr-1" />
-                      Gauge View
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0">
-                {chartViewMode === "bars" ? (
-                  <div className="h-80">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={chartData}
-                        margin={{ top: 20, right: 30, left: 20, bottom: 70 }}
-                        layout="vertical"
-                      >
-                        <XAxis type="number" hide />
-                        <YAxis 
-                          dataKey="name" 
-                          type="category" 
-                          width={120}
-                          tick={{ fontSize: 12 }}
-                        />
-                        <Tooltip
-                          content={({ active, payload }) => {
-                            if (active && payload && payload.length) {
-                              const data = payload[0].payload;
-                              const refRange = referenceRanges[
-                                Object.keys(bloodParameterInfo).find(
-                                  key => bloodParameterInfo[key as keyof typeof bloodParameterInfo].name === data.name
-                                ) as keyof typeof referenceRanges
-                              ];
-                              
-                              return (
-                                <div className="bg-white p-3 border rounded shadow-md">
-                                  <p className="font-medium">{data.name}</p>
-                                  <p>Value: <span className="font-semibold">{data.value}</span> {refRange?.unit}</p>
-                                  {refRange && (
-                                    <p className="text-gray-600 text-xs">
-                                      Normal range: {refRange.min}-{refRange.max} {refRange.unit}
-                                    </p>
-                                  )}
-                                  <p className="capitalize mt-1" style={{ 
-                                    color: data.status === "high" ? "#ef4444" : 
-                                           data.status === "low" ? "#3b82f6" : "#22c55e" 
-                                  }}>
-                                    Status: {data.status}
-                                  </p>
-                                </div>
-                              );
-                            }
-                            return null;
-                          }}
-                        />
-                        <Bar dataKey="value" minPointSize={2}>
-                          {chartData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={getBarColor(entry.status)} />
-                          ))}
-                          <LabelList 
-                            dataKey="value" 
-                            position="right" 
-                            style={{ textAnchor: 'start', fontSize: '12px', fill: '#666' }}
-                          />
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                    {chartData.map((param, index) => (
-                      <div 
-                        key={index}
-                        className="border rounded-lg p-4 flex flex-col items-center"
-                      >
-                        <div className="text-sm font-medium mb-2">{param.name}</div>
-                        <div 
-                          className="w-24 h-24 rounded-full border-8 flex items-center justify-center"
-                          style={{ borderColor: getBarColor(param.status) }}
-                        >
-                          <div className="text-center">
-                            <div className="text-xl font-bold">{param.value}</div>
-                            <div className="text-xs text-gray-500">
-                              {referenceRanges[
-                                Object.keys(bloodParameterInfo).find(
-                                  key => bloodParameterInfo[key as keyof typeof bloodParameterInfo].name === param.name
-                                ) as keyof typeof referenceRanges
-                              ]?.unit || ''}
-                            </div>
-                          </div>
-                        </div>
-                        <div 
-                          className="mt-2 text-sm font-medium capitalize"
-                          style={{ color: getBarColor(param.status) }}
-                        >
-                          {param.status}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="text-xs text-gray-500 mt-4">
-                  <div className="flex items-center justify-center gap-4">
-                    <div className="flex items-center">
-                      <div className="h-3 w-3 bg-red-500 rounded-full mr-1"></div>
-                      <span>High</span>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="h-3 w-3 bg-blue-500 rounded-full mr-1"></div>
-                      <span>Low</span>
-                    </div>
-                    <div className="flex items-center">
-                      <div className="h-3 w-3 bg-green-500 rounded-full mr-1"></div>
-                      <span>Normal</span>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-          
-          {/* Report content */}
-          <Card className="mb-6">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Report Details</CardTitle>
-              <Button 
-                variant="outline"
-                size="sm" 
-                className="text-medical-primary border-medical-light hover:bg-medical-light/20" 
-                onClick={handleDownload}
-              >
-                <Download className="h-4 w-4 mr-1" />
-                Download
-              </Button>
-            </CardHeader>
-            <CardContent className="py-4">
-              <div className="markdown prose max-w-none">
-                {/* Use remarkGfm plugin to properly render tables */}
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {report.rawReport}
-                </ReactMarkdown>
-              </div>
-            </CardContent>
-          </Card>
-          
-          {/* Understand Your Results Section */}
-          {relevantParameters.length > 0 && (
-            <Card className="mb-6">
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Info className="h-5 w-5 mr-2 text-medical-primary" />
-                  Understand Your Results
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-gray-600 mb-4">
-                  Learn more about the key measurements in your blood test and what they mean for your health.
-                </p>
-                
-                <Accordion type="single" collapsible className="w-full">
-                  {relevantParameters.map((param) => (
-                    <AccordionItem value={param} key={param}>
-                      <AccordionTrigger className="text-left font-medium">
-                        What is {bloodParameterInfo[param as keyof typeof bloodParameterInfo]?.name}?
-                      </AccordionTrigger>
-                      <AccordionContent>
-                        <p className="text-gray-700">
-                          {bloodParameterInfo[param as keyof typeof bloodParameterInfo]?.description}
-                        </p>
-                      </AccordionContent>
-                    </AccordionItem>
-                  ))}
-                </Accordion>
-                
-                {relevantParameters.length < 3 && (
-                  <div className="mt-4 pt-4 border-t border-gray-200">
-                    <h4 className="text-sm font-medium text-gray-800 mb-2">Other Common Blood Test Measurements</h4>
-                    <Accordion type="single" collapsible className="w-full">
-                      {Object.keys(bloodParameterInfo)
-                        .filter(param => !relevantParameters.includes(param))
-                        .slice(0, 5)
-                        .map((param) => (
-                          <AccordionItem value={param} key={param}>
-                            <AccordionTrigger className="text-left font-medium">
-                              What is {bloodParameterInfo[param as keyof typeof bloodParameterInfo]?.name}?
-                            </AccordionTrigger>
-                            <AccordionContent>
-                              <p className="text-gray-700">
-                                {bloodParameterInfo[param as keyof typeof bloodParameterInfo]?.description}
-                              </p>
-                            </AccordionContent>
-                          </AccordionItem>
-                        ))}
-                    </Accordion>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </main>
-    </div>
-  );
-};
-
-export default ReportDetail;
+                      <BarChart3 className="h-4 w-4 mr-1
