@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -155,13 +156,18 @@ const calculateNormalizedValue = (value: number, min: number, max: number): numb
   }
 
   // Calculate how far the value deviates from the nearest boundary
+  const rangeWidth = max - min;
   const midpoint = (max + min) / 2;
-  const range = max - min;
-  const deviation = Math.abs(value - midpoint) / range;
+  
+  // Find the closest boundary
+  const closestBoundary = value < min ? min : max;
+  
+  // Calculate distance from boundary as percentage of the range
+  const deviation = Math.abs(value - closestBoundary) / rangeWidth;
   
   // Apply exponential decay to the score based on deviation
   // The further from normal range, the more rapidly the score drops
-  let score = 100 * Math.exp(-2 * deviation);
+  const score = 100 * Math.exp(-3 * deviation);
   
   // Ensure score is between 0 and 100
   return Math.max(0, Math.min(100, score));
@@ -384,14 +390,36 @@ const extractParameterValues = (reportText: string): { parameter: string; name: 
 };
 
 // Updated to use parameter info from extraction
-const calculateHealthScore = (paramValues: { parameter: string; name: string; value: number; status: string }[]): number => {
+const calculateHealthScore = (paramValues: { parameter: string; name: string; value: number; status: string; referenceRange?: { min: number; max: number } }[]): number => {
   if (paramValues.length === 0) return 100; // Default perfect score
   
-  const abnormalCount = paramValues.filter(p => p.status !== "normal").length;
-  const totalCount = paramValues.length;
+  // Calculate a weighted score based on parameter values and their normalized scores
+  let totalScore = 0;
+  let normalizedScores = 0;
   
-  // Score starts at 100 and decreases based on abnormal parameters
-  return Math.max(0, 100 - (abnormalCount / totalCount) * 100);
+  paramValues.forEach(param => {
+    if (param.referenceRange) {
+      // For parameters with known reference ranges, calculate normalized score
+      const paramScore = calculateNormalizedValue(
+        param.value, 
+        param.referenceRange.min, 
+        param.referenceRange.max
+      );
+      totalScore += paramScore;
+      normalizedScores++;
+    } else {
+      // For parameters without reference ranges, use status
+      if (param.status === "normal") {
+        totalScore += 100;
+      } else if (param.status === "high" || param.status === "low") {
+        totalScore += 50; // Penalize abnormal values
+      }
+      normalizedScores++;
+    }
+  });
+  
+  // Average the scores
+  return normalizedScores > 0 ? totalScore / normalizedScores : 100;
 };
 
 // Function to get parameter description either from known info or generate a generic one
@@ -533,7 +561,20 @@ const ReportDetail = () => {
     
     // If we have a reference range, calculate normalized value
     if (param.referenceRange) {
-      normalizedValue = calculateNormalizedValue(param.value, param.referenceRange.min, param.referenceRange.max);
+      normalizedValue = calculateNormalizedValue(
+        param.value, 
+        param.referenceRange.min, 
+        param.referenceRange.max
+      );
+    } else {
+      // If no reference range but we know status, estimate normalized value
+      if (param.status === "normal") {
+        normalizedValue = 95; // Nearly perfect for normal values
+      } else if (param.status === "high") {
+        normalizedValue = 30; // Lower score for high values
+      } else if (param.status === "low") {
+        normalizedValue = 40; // Slightly better score for low values
+      }
     }
       
     return {
@@ -814,6 +855,7 @@ const ReportDetail = () => {
                                   <p className="font-semibold">{data.name}</p>
                                   <p>Value: {data.value} {data.unit}</p>
                                   <p>Status: {data.status}</p>
+                                  <p>Health Score: {Math.round(data.normalizedValue)}</p>
                                 </div>
                               );
                             }
@@ -869,6 +911,7 @@ const ReportDetail = () => {
                           <TableHead>Parameter</TableHead>
                           <TableHead>Value</TableHead>
                           <TableHead>Status</TableHead>
+                          <TableHead>Health Score</TableHead>
                           <TableHead>Reference Range</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -891,6 +934,9 @@ const ReportDetail = () => {
                               >
                                 {param.status}
                               </span>
+                            </TableCell>
+                            <TableCell>
+                              {Math.round(chartData[i]?.normalizedValue || 50)}
                             </TableCell>
                             <TableCell>
                               {param.referenceRange
