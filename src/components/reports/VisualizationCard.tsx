@@ -3,23 +3,13 @@ import React, { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { BarChart3, Gauge, LineChart } from "lucide-react";
-import { 
-  ChartContainer, 
-  ChartTooltip, 
-  ChartTooltipContent 
-} from "@/components/ui/chart";
+import { Gauge, LineChart } from "lucide-react";
 import {
-  BarChart,
-  Bar,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Cell,
-} from "recharts";
+  ToggleGroup,
+  ToggleGroupItem
+} from "@/components/ui/toggle-group";
 
-// Utility function to get bar color based on status
+// Utility function to get color based on status
 const getBarColor = (status: string) => {
   switch (status) {
     case "high": return "#ef4444"; // Red for high
@@ -52,90 +42,32 @@ interface VisualizationCardProps {
 }
 
 const VisualizationCard: React.FC<VisualizationCardProps> = ({ chartData, parameterValues }) => {
-  const [chartViewMode, setChartViewMode] = useState<"bars" | "gauge" | "table">("bars");
+  const [chartViewMode, setChartViewMode] = useState<"gauge" | "table">("gauge");
 
   return (
     <Card className="mb-6">
       <CardHeader>
         <div className="flex justify-between items-center">
           <CardTitle className="flex items-center">
-            <BarChart3 className="h-5 w-5 mr-2 text-medical-primary" />
+            <LineChart className="h-5 w-5 mr-2 text-medical-primary" />
             <span>Your Results Visualization</span>
           </CardTitle>
           
-          <div className="flex items-center space-x-2">
-            <Button 
-              variant={chartViewMode === "bars" ? "default" : "outline"} 
-              size="sm"
-              onClick={() => setChartViewMode("bars")}
-              className="flex items-center"
-            >
-              <BarChart3 className="h-4 w-4 mr-1" />
-              Bars
-            </Button>
-            <Button 
-              variant={chartViewMode === "gauge" ? "default" : "outline"} 
-              size="sm"
-              onClick={() => setChartViewMode("gauge")}
-              className="flex items-center"
-            >
+          <ToggleGroup type="single" value={chartViewMode} onValueChange={(value) => {
+            if (value) setChartViewMode(value as "gauge" | "table");
+          }}>
+            <ToggleGroupItem value="gauge" aria-label="Gauge View">
               <Gauge className="h-4 w-4 mr-1" />
-              Gauge
-            </Button>
-            <Button 
-              variant={chartViewMode === "table" ? "default" : "outline"} 
-              size="sm"
-              onClick={() => setChartViewMode("table")}
-              className="flex items-center"
-            >
+              <span className="hidden sm:inline">Gauge</span>
+            </ToggleGroupItem>
+            <ToggleGroupItem value="table" aria-label="Table View">
               <LineChart className="h-4 w-4 mr-1" />
-              Table
-            </Button>
-          </div>
+              <span className="hidden sm:inline">Table</span>
+            </ToggleGroupItem>
+          </ToggleGroup>
         </div>
       </CardHeader>
       <CardContent>
-        {chartViewMode === "bars" && (
-          <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={chartData}
-                layout="vertical"
-                margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
-              >
-                <XAxis type="number" domain={[0, 100]} />
-                <YAxis 
-                  dataKey="name" 
-                  type="category" 
-                  width={80}
-                  tick={{ fontSize: 12 }}
-                />
-                <Tooltip
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      const data = payload[0].payload;
-                      return (
-                        <div className="bg-white p-2 border rounded shadow-md">
-                          <p className="font-semibold">{data.name}</p>
-                          <p>Value: {data.value} {data.unit}</p>
-                          <p>Status: {data.status}</p>
-                          <p>Health Score: {Math.round(data.normalizedValue)}</p>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-                <Bar dataKey="normalizedValue">
-                  {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={getBarColor(entry.status)} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
         {chartViewMode === "gauge" && (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             {chartData.map((item, index) => (

@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useReports, Report } from "@/context/ReportContext";
@@ -83,6 +82,8 @@ const ReportDetail = () => {
       normalizedValue
     };
   });
+  
+  // ... keep existing code for loading state
   
   if (loading) {
     return (
