@@ -20,7 +20,7 @@ const Header = () => {
           <div className="bg-medical-primary p-1 rounded">
             <FileText className="h-6 w-6 text-white" />
           </div>
-          <h1 className="text-xl font-bold text-medical-dark">Med Report Analyzer</h1>
+          <h1 className="text-xl font-bold text-medical-dark">Blood Wise</h1>
         </div>
         
         {user && (
