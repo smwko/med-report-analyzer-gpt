@@ -36,7 +36,7 @@ const Login = () => {
       if (success) {
         toast({
           title: "Login successful",
-          description: "Welcome to Med Report Analyzer",
+          description: "Welcome to Blood Wise",
         });
         navigate("/dashboard");
       } else {
@@ -66,7 +66,7 @@ const Login = () => {
               <FileText className="h-8 w-8 text-white" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold text-medical-dark">Med Report Analyzer</h1>
+          <h1 className="text-3xl font-bold text-medical-dark">Blood Wise</h1>
           <p className="text-gray-600 mt-2">Upload and analyze your medical reports</p>
         </div>
         
